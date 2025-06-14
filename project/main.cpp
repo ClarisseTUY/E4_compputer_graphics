@@ -1,7 +1,12 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <vector>
 #include <cmath>
+#include <string>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
 
 // ========== UTILS MATRICES 4x4 (col-major) ==========
 void loadIdentity(float* mat) {
@@ -65,7 +70,6 @@ float dot(const float* v1, const float* v2) {
 void lookAt(const float* eye, const float* target, const float* up, float* view) {
     float f[3] = {target[0]-eye[0], target[1]-eye[1], target[2]-eye[2]};
     normalize(f);
-    // forward = -f
     float forward[3] = {-f[0], -f[1], -f[2]};
     float right[3];
     cross(up, forward, right);
@@ -85,7 +89,7 @@ void lookAt(const float* eye, const float* target, const float* up, float* view)
     view[14] = -dot(forward, eye);
 }
 
-// Projection perspective (fov en degrés, ratio = width/height, near, far)
+// Projection perspective (fov en degrés, ratio = width/height, near, far) 
 void perspective(float fov, float ratio, float near, float far, float* proj) {
     float f = 1.0f / tanf((fov*3.14159265f/180.0f)/2.0f);
     loadIdentity(proj);
@@ -109,7 +113,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
         firstMouse = false;
     }
     double xoffset = xpos - lastX;
-    double yoffset = ypos - lastY;
+    double yoffset = ypos - lastY; 
     lastX = xpos;
     lastY = ypos;
 
@@ -121,9 +125,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if(rotX < -89.0f) rotX = -89.0f;
 }
 
-// ========== GESTION CLAVIER pour rotation cube avec ZQSD ==========
-
-
+// ========== GESTION CLAVIER ==========
 void processInput(GLFWwindow* window) {
     float sensitivity = 0.05f; // vitesse rotation
 
@@ -135,7 +137,6 @@ void processInput(GLFWwindow* window) {
         rotY -= sensitivity;
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         rotY += sensitivity;
-
 
     // Limite pour rotX
     if(rotX > 89.0f) rotX = 89.0f;
@@ -188,7 +189,6 @@ void main() {
 
     // Lumière simple diffuse + ambient
     vec3 ambient = 0.1 * color;
-
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
@@ -238,6 +238,92 @@ GLuint createProgram(const char* vertSrc, const char* fragSrc) {
     return prog;
 }
 
+// Structure pour stocker les données du mesh
+struct Mesh {
+    std::vector<float> vertices; // Format : [x,y,z, nx,ny,nz, u,v, ...]
+    std::vector<GLuint> indices;
+    GLuint VAO, VBO, EBO;
+};
+
+// Fonction pour charger un OBJ avec TinyOBJLoader
+bool loadOBJ(const std::string& path, Mesh& mesh) {
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    // Charger le fichier OBJ avec triangularisation activée
+    bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.c_str(), nullptr, true);
+
+    if (!warn.empty()) std::cerr << "Warning: " << warn << std::endl;
+    if (!err.empty()) std::cerr << "Error: " << err << std::endl;
+    if (!ret) return false;
+
+    // Déplier les vertices pour OpenGL (position + normale + texcoord)
+    std::vector<float> vertexData;
+    std::vector<GLuint> indexData;
+
+    for (const auto& shape : shapes) {
+        for (const auto& index : shape.mesh.indices) {
+            // Position
+            vertexData.push_back(attrib.vertices[3 * index.vertex_index + 0]);
+            vertexData.push_back(attrib.vertices[3 * index.vertex_index + 1]);
+            vertexData.push_back(attrib.vertices[3 * index.vertex_index + 2]);
+
+            // Normale (si disponible)
+            if (index.normal_index >= 0) {
+                vertexData.push_back(attrib.normals[3 * index.normal_index + 0]);
+                vertexData.push_back(attrib.normals[3 * index.normal_index + 1]);
+                vertexData.push_back(attrib.normals[3 * index.normal_index + 2]);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(0.0f);
+                vertexData.push_back(1.0f);
+            }
+
+            // Coordonnées de texture (si disponible)
+            if (index.texcoord_index >= 0) {
+                vertexData.push_back(attrib.texcoords[2 * index.texcoord_index + 0]);
+                vertexData.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(0.0f);
+            }
+
+            indexData.push_back(static_cast<GLuint>(indexData.size()));
+        }
+    }
+
+    // Stocker les données dans le mesh
+    mesh.vertices = vertexData;
+    mesh.indices = indexData;
+
+    // Configurer VAO, VBO, EBO
+    glGenVertexArrays(1, &mesh.VAO);
+    glGenBuffers(1, &mesh.VBO);
+    glGenBuffers(1, &mesh.EBO);
+
+    glBindVertexArray(mesh.VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
+    glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(GLuint), mesh.indices.data(), GL_STATIC_DRAW);
+
+    // Attributs : position (3), normale (3), texcoord (2)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    return true;
+}
+
 // ========== MAIN ==========
 int main() {
     if(!glfwInit()) {
@@ -245,7 +331,7 @@ int main() {
         return -1;
     }
 
-    GLFWwindow* window = glfwCreateWindow(800,600,"Cube texturé avec lumière & gamma correction", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(800,600,"Scene 3D avec OBJ", nullptr, nullptr);
     if(!window) {
         std::cerr << "Failed to create window\n";
         glfwTerminate();
@@ -262,81 +348,23 @@ int main() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_FRAMEBUFFER_SRGB);
 
-    // Plus besoin du callback souris
     glfwSetCursorPosCallback(window, mouse_callback);
 
     GLuint shaderProgram = createProgram(vertexShaderSource, fragmentShaderSource);
 
+    // Charger le modèle OBJ
+    Mesh mesh;
+    if (!loadOBJ("models/cube.obj", mesh)) {
+        std::cerr << "Failed to load OBJ file\n";
+        glfwTerminate();
+        return -1;
+    }
 
-    // Cube data (positions, normals, texcoords)
-    float vertices[] = {
-        // positions          // normals           // texcoords
-        -0.5f,-0.5f,-0.5f,   0,0,-1,             0,0,
-         0.5f,-0.5f,-0.5f,   0,0,-1,             1,0,
-         0.5f, 0.5f,-0.5f,   0,0,-1,             1,1,
-         0.5f, 0.5f,-0.5f,   0,0,-1,             1,1,
-        -0.5f, 0.5f,-0.5f,   0,0,-1,             0,1,
-        -0.5f,-0.5f,-0.5f,   0,0,-1,             0,0,
-
-        -0.5f,-0.5f, 0.5f,   0,0,1,              0,0,
-         0.5f,-0.5f, 0.5f,   0,0,1,              1,0,
-         0.5f, 0.5f, 0.5f,   0,0,1,              1,1,
-         0.5f, 0.5f, 0.5f,   0,0,1,              1,1,
-        -0.5f, 0.5f, 0.5f,   0,0,1,              0,1,
-        -0.5f,-0.5f, 0.5f,   0,0,1,              0,0,
-
-        -0.5f, 0.5f, 0.5f,  -1,0,0,              1,0,
-        -0.5f, 0.5f,-0.5f,  -1,0,0,              1,1,
-        -0.5f,-0.5f,-0.5f,  -1,0,0,              0,1,
-        -0.5f,-0.5f,-0.5f,  -1,0,0,              0,1,
-        -0.5f,-0.5f, 0.5f,  -1,0,0,              0,0,
-        -0.5f, 0.5f, 0.5f,  -1,0,0,              1,0,
-
-         0.5f, 0.5f, 0.5f,   1,0,0,              1,0,
-         0.5f, 0.5f,-0.5f,   1,0,0,              1,1,
-         0.5f,-0.5f,-0.5f,   1,0,0,              0,1,
-         0.5f,-0.5f,-0.5f,   1,0,0,              0,1,
-         0.5f,-0.5f, 0.5f,   1,0,0,              0,0,
-         0.5f, 0.5f, 0.5f,   1,0,0,              1,0,
-
-        -0.5f,-0.5f,-0.5f,   0,-1,0,             0,1,
-         0.5f,-0.5f,-0.5f,   0,-1,0,             1,1,
-         0.5f,-0.5f, 0.5f,   0,-1,0,             1,0,
-         0.5f,-0.5f, 0.5f,   0,-1,0,             1,0,
-        -0.5f,-0.5f, 0.5f,   0,-1,0,             0,0,
-        -0.5f,-0.5f,-0.5f,   0,-1,0,             0,1,
-
-        -0.5f, 0.5f,-0.5f,   0,1,0,              0,1,
-         0.5f, 0.5f,-0.5f,   0,1,0,              1,1,
-         0.5f, 0.5f, 0.5f,   0,1,0,              1,0,
-         0.5f, 0.5f, 0.5f,   0,1,0,              1,0,
-        -0.5f, 0.5f, 0.5f,   0,1,0,              0,0,
-        -0.5f, 0.5f,-0.5f,   0,1,0,              0,1
-    };
-
-    GLuint VBO, VAO;
-    glGenVertexArrays(1,&VAO);
-    glGenBuffers(1,&VBO);
-
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    // positions
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,8*sizeof(float),(void*)0);
-    glEnableVertexAttribArray(0);
-    // normals
-    glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,8*sizeof(float),(void*)(3*sizeof(float)));
-    glEnableVertexAttribArray(1);
-    // texcoords
-    glVertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,8*sizeof(float),(void*)(6*sizeof(float)));
-    glEnableVertexAttribArray(2);
-
-    // Chargement texture (simple couleur générée ici)
+    // Texture simple (orange, comme avant)
     GLuint texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
-    unsigned char texData[3] = {255, 128, 0}; // orange
+    unsigned char texData[3] = {255, 128, 0};
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1,1,0, GL_RGB, GL_UNSIGNED_BYTE, texData);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -350,7 +378,6 @@ int main() {
     int locLight = glGetUniformLocation(shaderProgram, "lightPos");
     int locViewPos = glGetUniformLocation(shaderProgram, "viewPos");
 
-    
     float projection[16];
     perspective(45.0f, 800.0f/600.0f, 0.1f, 100.0f, projection);
 
@@ -362,12 +389,10 @@ int main() {
     while(!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Gérer les entrées clavier ZQSD pour rotation
         processInput(window);
 
         lookAt(eye, target, up, view);
 
-        // Rotation cube selon les rotations rotX, rotY modifiées au clavier
         float Rx[16], Ry[16], WorldRot[16];
         rotationMatrixX(rotX, Rx);
         rotationMatrixY(rotY, Ry);
@@ -390,16 +415,19 @@ int main() {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture);
 
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
+        // Rendu du mesh chargé
+        glBindVertexArray(mesh.VAO);
+        glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
-    // Cleanup (inchangé)
-    glDeleteVertexArrays(1,&VAO);
-    glDeleteBuffers(1,&VBO);
+    // Nettoyage
+    glDeleteVertexArrays(1, &mesh.VAO);
+    glDeleteBuffers(1, &mesh.VBO);
+    glDeleteBuffers(1, &mesh.EBO);
+    glDeleteTextures(1, &texture);
     glDeleteProgram(shaderProgram);
     glfwDestroyWindow(window);
     glfwTerminate();
