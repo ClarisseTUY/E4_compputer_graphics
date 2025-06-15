@@ -30,6 +30,13 @@ void translationMatrix(float x, float y, float z, float* mat) {
     mat[12] = x; mat[13] = y; mat[14] = z;
 }
 
+void scaleMatrix(float sx, float sy, float sz, float* mat) {
+    loadIdentity(mat);
+    mat[0] = sx;
+    mat[5] = sy;
+    mat[10] = sz;
+}
+
 void rotationMatrixX(float angleDeg, float* mat) {
     float rad = angleDeg * (3.14159265f/180.0f);
     float c = cosf(rad), s = sinf(rad);
@@ -106,6 +113,7 @@ float rotX = 0.0f, rotY = 0.0f;
 double lastX = 0.0, lastY = 0.0;
 bool firstMouse = true;
 
+
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if (firstMouse) {
         lastX = xpos;
@@ -121,13 +129,16 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     rotX += (float)yoffset * sensitivity;
     rotY += (float)xoffset * sensitivity;
 
-    if(rotX > 89.0f) rotX = 89.0f;
-    if(rotX < -89.0f) rotX = -89.0f;
+    if(rotX > 90.0f) rotX = 90.0f;
+    if(rotX < -90.0f) rotX = -90.0f;
 }
 
 // ========== GESTION CLAVIER ==========
 void processInput(GLFWwindow* window) {
     float sensitivity = 0.05f; // vitesse rotation
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)  // touche "Esc" pour sortir
+        glfwSetWindowShouldClose(window, true);
 
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)  // touche "Z" en AZERTY
         rotX -= sensitivity;
@@ -139,8 +150,8 @@ void processInput(GLFWwindow* window) {
         rotY += sensitivity;
 
     // Limite pour rotX
-    if(rotX > 89.0f) rotX = 89.0f;
-    if(rotX < -89.0f) rotX = -89.0f;
+    if(rotX > 90.0f) rotX = 90.0f;
+    if(rotX < -90.0f) rotX = -90.0f;
 }
 
 // ========== SHADERS ==========
@@ -243,6 +254,7 @@ struct Mesh {
     std::vector<float> vertices; // Format : [x,y,z, nx,ny,nz, u,v, ...]
     std::vector<GLuint> indices;
     GLuint VAO, VBO, EBO;
+    float WorldMatrix[16]; // Matrice de transformation
 };
 
 // Fonction pour charger un OBJ avec TinyOBJLoader
@@ -349,16 +361,50 @@ int main() {
     glEnable(GL_FRAMEBUFFER_SRGB);
 
     glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     GLuint shaderProgram = createProgram(vertexShaderSource, fragmentShaderSource);
 
-    // Charger le modèle OBJ
-    Mesh mesh;
-    if (!loadOBJ("models/cube.obj", mesh)) {
-        std::cerr << "Failed to load OBJ file\n";
+    // Charger plusieurs modèles OBJ
+    std::vector<Mesh> meshes(3); // Cube, sphère, pyramide
+
+    // Cube
+    if (!loadOBJ("models/cube.obj", meshes[0])) {
+        std::cerr << "Failed to load cube.obj\n";
         glfwTerminate();
         return -1;
     }
+    float transCube[16], scaleCube[16], worldCube[16];
+    translationMatrix(-2.0f, 0.0f, 0.0f, transCube); // Position à gauche
+    scaleMatrix(1.0f, 1.0f, 1.0f, scaleCube); // Taille normale
+    multiplyMatrix(transCube, scaleCube, worldCube);
+    for (int i = 0; i < 16; ++i) meshes[0].WorldMatrix[i] = worldCube[i];
+
+    // Cylindre
+    if (!loadOBJ("models/cylinder.obj", meshes[1])) {
+        std::cerr << "Failed to load cylinder.obj\n";
+        glfwTerminate();
+        return -1;
+    }
+    float transCylinder[16], scaleCylinder[16], worldCylinder[16];
+    translationMatrix(0.0f, 0.0f, 0.0f, transCylinder); // Position au centre
+    scaleMatrix(1.0f, 1.0f, 1.0f, scaleCylinder); // Taille normale
+    multiplyMatrix(transCylinder, scaleCylinder, worldCylinder);
+    for (int i = 0; i < 16; ++i) meshes[1].WorldMatrix[i] = worldCylinder[i];
+
+    // Pyramide
+    if (!loadOBJ("models/pyramid.obj", meshes[2])) {
+        std::cerr << "Failed to load pyramid.obj\n";
+        glfwTerminate();
+        return -1;
+    }
+    float transPyramid[16], rotPyramid[16], scalePyramid[16], tempPyramid[16], worldPyramid[16];
+    translationMatrix(2.0f, 0.0f, 0.0f, transPyramid); // Position à droite
+    rotationMatrixY(45.0f, rotPyramid); // Rotation de 45° autour de Y
+    scaleMatrix(1.0f, 1.5f, 1.0f, scalePyramid); // Plus haute
+    multiplyMatrix(transPyramid, rotPyramid, tempPyramid);
+    multiplyMatrix(tempPyramid, scalePyramid, worldPyramid);
+    for (int i = 0; i < 16; ++i) meshes[2].WorldMatrix[i] = worldPyramid[i];
 
     // Texture simple (orange, comme avant)
     GLuint texture;
@@ -391,42 +437,40 @@ int main() {
 
         processInput(window);
 
+        // Calculer la position de la caméra en orbite
+        float radius = 5.0f; // Distance de la caméra au centre
+        float camX = radius * cos(rotX * 3.14159265f / 180.0f) * sin(rotY * 3.14159265f / 180.0f);
+        float camY = radius * sin(rotX * 3.14159265f / 180.0f);
+        float camZ = radius * cos(rotX * 3.14159265f / 180.0f) * cos(rotY * 3.14159265f / 180.0f);
+        eye[0] = camX;
+        eye[1] = camY;
+        eye[2] = camZ;
         lookAt(eye, target, up, view);
 
-        float Rx[16], Ry[16], WorldRot[16];
-        rotationMatrixX(rotX, Rx);
-        rotationMatrixY(rotY, Ry);
-        multiplyMatrix(Ry, Rx, WorldRot);
-
-        float trans[16];
-        translationMatrix(0.0f, 0.0f, 0.0f, trans);
-
-        float World[16];
-        multiplyMatrix(trans, WorldRot, World);
-
         glUseProgram(shaderProgram);
-        glUniformMatrix4fv(locWorld, 1, GL_FALSE, World);
         glUniformMatrix4fv(locView, 1, GL_FALSE, view);
         glUniformMatrix4fv(locProj, 1, GL_FALSE, projection);
-
         glUniform3f(locLight, 1.0f, 1.0f, 2.0f);
         glUniform3f(locViewPos, eye[0], eye[1], eye[2]);
-
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture);
 
-        // Rendu du mesh chargé
-        glBindVertexArray(mesh.VAO);
-        glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
+        for (const auto& mesh : meshes) {
+            glUniformMatrix4fv(locWorld, 1, GL_FALSE, mesh.WorldMatrix);
+            glBindVertexArray(mesh.VAO);
+            glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
+        }
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
     // Nettoyage
-    glDeleteVertexArrays(1, &mesh.VAO);
-    glDeleteBuffers(1, &mesh.VBO);
-    glDeleteBuffers(1, &mesh.EBO);
+    for (auto& mesh : meshes) {
+        glDeleteVertexArrays(1, &mesh.VAO);
+        glDeleteBuffers(1, &mesh.VBO);
+        glDeleteBuffers(1, &mesh.EBO);
+    }
     glDeleteTextures(1, &texture);
     glDeleteProgram(shaderProgram);
     glfwDestroyWindow(window);
