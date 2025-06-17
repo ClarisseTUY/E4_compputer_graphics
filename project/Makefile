@@ -2,7 +2,7 @@
 TARGET = cube
 
 # Fichiers sources
-SRC = main.cpp
+SRC = main.cpp tiny_obj_loader.cc
 
 # Headers (pour gérer les dépendances)
 HEADERS = tiny_obj_loader.h

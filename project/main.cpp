@@ -4,8 +4,6 @@
 #include <vector>
 #include <cmath>
 #include <string>
-
-#define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
 // ========== UTILS MATRICES 4x4 (col-major) ==========
