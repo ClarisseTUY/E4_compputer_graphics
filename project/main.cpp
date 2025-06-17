@@ -4,6 +4,7 @@
 #include <vector>
 #include <cmath>
 #include <string>
+
 #include "tiny_obj_loader.h"
 
 // ========== UTILS MATRICES 4x4 (col-major) ==========
@@ -83,18 +84,15 @@ void lookAt(const float* eye, const float* target, const float* up, float* view)
     cross(forward, right, upCorrected);
 
     loadIdentity(view);
-    // Colonnes = x,y,z axes du repère caméra transposés
     view[0] = right[0];    view[4] = right[1];    view[8] = right[2];
     view[1] = upCorrected[0]; view[5] = upCorrected[1]; view[9] = upCorrected[2];
     view[2] = forward[0];  view[6] = forward[1];  view[10] = forward[2];
-
-    // Translation inverse
     view[12] = -dot(right, eye);
     view[13] = -dot(upCorrected, eye);
     view[14] = -dot(forward, eye);
 }
 
-// Projection perspective (fov en degrés, ratio = width/height, near, far) 
+// Projection perspective
 void perspective(float fov, float ratio, float near, float far, float* proj) {
     float f = 1.0f / tanf((fov*3.14159265f/180.0f)/2.0f);
     loadIdentity(proj);
@@ -106,11 +104,10 @@ void perspective(float fov, float ratio, float near, float far, float* proj) {
     proj[15] = 0.0f;
 }
 
-// ========== GESTION SOURIS pour rotation cube ==========
+// ========== GESTION SOURIS ==========
 float rotX = 0.0f, rotY = 0.0f;
 double lastX = 0.0, lastY = 0.0;
 bool firstMouse = true;
-
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if (firstMouse) {
@@ -119,7 +116,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
         firstMouse = false;
     }
     double xoffset = xpos - lastX;
-    double yoffset = ypos - lastY; 
+    double yoffset = ypos - lastY;
     lastX = xpos;
     lastY = ypos;
 
@@ -133,21 +130,20 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 
 // ========== GESTION CLAVIER ==========
 void processInput(GLFWwindow* window) {
-    float sensitivity = 0.05f; // vitesse rotation
+    float sensitivity = 0.05f;
 
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)  // touche "Esc" pour sortir
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)  // touche "Z" en AZERTY
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         rotX -= sensitivity;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
         rotX += sensitivity;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)  // touche "Q" en AZERTY
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
         rotY -= sensitivity;
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         rotY += sensitivity;
 
-    // Limite pour rotX
     if(rotX > 90.0f) rotX = 90.0f;
     if(rotX < -90.0f) rotX = -90.0f;
 }
@@ -176,7 +172,7 @@ void main() {
 }
 )glsl";
 
-const char* fragmentShaderSource = R"glsl(
+const char* fragmentShaderLambertSource = R"glsl(
 #version 330 core
 in vec3 FragPos;
 in vec3 Normal;
@@ -191,12 +187,9 @@ uniform vec3 viewPos;
 const float gamma = 2.2;
 
 void main() {
-    // Gamma correction - lire la texture linéairement
     vec3 texColor = texture(texture1, TexCoord).rgb;
-    // linéarisation (on suppose la texture est sRGB, on corrige en puissance gamma)
     vec3 color = pow(texColor, vec3(gamma));
 
-    // Lumière simple diffuse + ambient
     vec3 ambient = 0.1 * color;
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
@@ -204,8 +197,75 @@ void main() {
     vec3 diffuse = diff * color;
 
     vec3 result = ambient + diffuse;
+    result = pow(result, vec3(1.0/gamma));
 
-    // Correction gamma à la sortie (compression)
+    FragColor = vec4(result, 1.0);
+}
+)glsl";
+
+const char* fragmentShaderPhongSource = R"glsl(
+#version 330 core
+in vec3 FragPos;
+in vec3 Normal;
+in vec2 TexCoord;
+
+out vec4 FragColor;
+
+uniform sampler2D texture1;
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+
+const float gamma = 2.2;
+const float shininess = 32.0;
+
+void main() {
+    vec3 texColor = texture(texture1, TexCoord).rgb;
+    vec3 color = pow(texColor, vec3(gamma));
+
+    vec3 ambient = 0.1 * color;
+
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(lightPos - FragPos);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * color;
+
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 reflectDir = reflect(-lightDir, norm);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+    vec3 specular = 0.5 * spec * vec3(1.0);
+
+    vec3 result = ambient + diffuse + specular;
+    result = pow(result, vec3(1.0/gamma));
+
+    FragColor = vec4(result, 1.0);
+}
+)glsl";
+
+const char* fragmentShaderColorSource = R"glsl(
+#version 330 core
+in vec3 FragPos;
+in vec3 Normal;
+in vec2 TexCoord;
+
+out vec4 FragColor;
+
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+uniform vec3 objectColor;
+
+const float gamma = 2.2;
+
+void main() {
+    vec3 color = objectColor;
+
+    vec3 ambient = 0.1 * color;
+
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(lightPos - FragPos);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * color;
+
+    vec3 result = ambient + diffuse;
     result = pow(result, vec3(1.0/gamma));
 
     FragColor = vec4(result, 1.0);
@@ -252,7 +312,8 @@ struct Mesh {
     std::vector<float> vertices; // Format : [x,y,z, nx,ny,nz, u,v, ...]
     std::vector<GLuint> indices;
     GLuint VAO, VBO, EBO;
-    float WorldMatrix[16]; // Matrice de transformation
+    float WorldMatrix[16];
+    GLuint shaderProgram; // Shader spécifique à cet objet
 };
 
 // Fonction pour charger un OBJ avec TinyOBJLoader
@@ -262,25 +323,21 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
     std::vector<tinyobj::material_t> materials;
     std::string warn, err;
 
-    // Charger le fichier OBJ avec triangularisation activée
     bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.c_str(), nullptr, true);
 
     if (!warn.empty()) std::cerr << "Warning: " << warn << std::endl;
     if (!err.empty()) std::cerr << "Error: " << err << std::endl;
     if (!ret) return false;
 
-    // Déplier les vertices pour OpenGL (position + normale + texcoord)
     std::vector<float> vertexData;
     std::vector<GLuint> indexData;
 
     for (const auto& shape : shapes) {
         for (const auto& index : shape.mesh.indices) {
-            // Position
             vertexData.push_back(attrib.vertices[3 * index.vertex_index + 0]);
             vertexData.push_back(attrib.vertices[3 * index.vertex_index + 1]);
             vertexData.push_back(attrib.vertices[3 * index.vertex_index + 2]);
 
-            // Normale (si disponible)
             if (index.normal_index >= 0) {
                 vertexData.push_back(attrib.normals[3 * index.normal_index + 0]);
                 vertexData.push_back(attrib.normals[3 * index.normal_index + 1]);
@@ -291,7 +348,6 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
                 vertexData.push_back(1.0f);
             }
 
-            // Coordonnées de texture (si disponible)
             if (index.texcoord_index >= 0) {
                 vertexData.push_back(attrib.texcoords[2 * index.texcoord_index + 0]);
                 vertexData.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
@@ -304,11 +360,9 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
         }
     }
 
-    // Stocker les données dans le mesh
     mesh.vertices = vertexData;
     mesh.indices = indexData;
 
-    // Configurer VAO, VBO, EBO
     glGenVertexArrays(1, &mesh.VAO);
     glGenBuffers(1, &mesh.VBO);
     glGenBuffers(1, &mesh.EBO);
@@ -321,7 +375,6 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(GLuint), mesh.indices.data(), GL_STATIC_DRAW);
 
-    // Attributs : position (3), normale (3), texcoord (2)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
@@ -361,10 +414,11 @@ int main() {
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-    GLuint shaderProgram = createProgram(vertexShaderSource, fragmentShaderSource);
+    GLuint lambertProgram = createProgram(vertexShaderSource, fragmentShaderLambertSource);
+    GLuint phongProgram = createProgram(vertexShaderSource, fragmentShaderPhongSource);
+    GLuint colorProgram = createProgram(vertexShaderSource, fragmentShaderColorSource);
 
-    // Charger plusieurs modèles OBJ
-    std::vector<Mesh> meshes(3); // Cube, sphère, pyramide
+    std::vector<Mesh> meshes(3);
 
     // Cube
     if (!loadOBJ("models/cube.obj", meshes[0])) {
@@ -373,10 +427,11 @@ int main() {
         return -1;
     }
     float transCube[16], scaleCube[16], worldCube[16];
-    translationMatrix(-2.0f, 0.0f, 0.0f, transCube); // Position à gauche
-    scaleMatrix(1.0f, 1.0f, 1.0f, scaleCube); // Taille normale
+    translationMatrix(-2.0f, 0.0f, 0.0f, transCube);
+    scaleMatrix(1.0f, 1.0f, 1.0f, scaleCube);
     multiplyMatrix(transCube, scaleCube, worldCube);
     for (int i = 0; i < 16; ++i) meshes[0].WorldMatrix[i] = worldCube[i];
+    meshes[0].shaderProgram = colorProgram;
 
     // Cylindre
     if (!loadOBJ("models/cylinder.obj", meshes[1])) {
@@ -385,10 +440,11 @@ int main() {
         return -1;
     }
     float transCylinder[16], scaleCylinder[16], worldCylinder[16];
-    translationMatrix(0.0f, 0.0f, 0.0f, transCylinder); // Position au centre
-    scaleMatrix(1.0f, 1.0f, 1.0f, scaleCylinder); // Taille normale
+    translationMatrix(0.0f, 0.0f, 0.0f, transCylinder);
+    scaleMatrix(1.0f, 1.0f, 1.0f, scaleCylinder);
     multiplyMatrix(transCylinder, scaleCylinder, worldCylinder);
     for (int i = 0; i < 16; ++i) meshes[1].WorldMatrix[i] = worldCylinder[i];
+    meshes[1].shaderProgram = phongProgram;
 
     // Pyramide
     if (!loadOBJ("models/pyramid.obj", meshes[2])) {
@@ -397,14 +453,14 @@ int main() {
         return -1;
     }
     float transPyramid[16], rotPyramid[16], scalePyramid[16], tempPyramid[16], worldPyramid[16];
-    translationMatrix(2.0f, 0.0f, 0.0f, transPyramid); // Position à droite
-    rotationMatrixY(45.0f, rotPyramid); // Rotation de 45° autour de Y
-    scaleMatrix(1.0f, 1.5f, 1.0f, scalePyramid); // Plus haute
+    translationMatrix(2.0f, 0.0f, 0.0f, transPyramid);
+    rotationMatrixY(45.0f, rotPyramid);
+    scaleMatrix(1.0f, 1.5f, 1.0f, scalePyramid);
     multiplyMatrix(transPyramid, rotPyramid, tempPyramid);
     multiplyMatrix(tempPyramid, scalePyramid, worldPyramid);
     for (int i = 0; i < 16; ++i) meshes[2].WorldMatrix[i] = worldPyramid[i];
+    meshes[2].shaderProgram = lambertProgram;
 
-    // Texture simple (orange, comme avant)
     GLuint texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -412,15 +468,6 @@ int main() {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1,1,0, GL_RGB, GL_UNSIGNED_BYTE, texData);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    glUseProgram(shaderProgram);
-    glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
-
-    int locWorld = glGetUniformLocation(shaderProgram, "WorldMatrix");
-    int locView = glGetUniformLocation(shaderProgram, "ViewMatrix");
-    int locProj = glGetUniformLocation(shaderProgram, "ProjectionMatrix");
-    int locLight = glGetUniformLocation(shaderProgram, "lightPos");
-    int locViewPos = glGetUniformLocation(shaderProgram, "viewPos");
 
     float projection[16];
     perspective(45.0f, 800.0f/600.0f, 0.1f, 100.0f, projection);
@@ -435,8 +482,7 @@ int main() {
 
         processInput(window);
 
-        // Calculer la position de la caméra en orbite
-        float radius = 5.0f; // Distance de la caméra au centre
+        float radius = 5.0f;
         float camX = radius * cos(rotX * 3.14159265f / 180.0f) * sin(rotY * 3.14159265f / 180.0f);
         float camY = radius * sin(rotX * 3.14159265f / 180.0f);
         float camZ = radius * cos(rotX * 3.14159265f / 180.0f) * cos(rotY * 3.14159265f / 180.0f);
@@ -445,16 +491,27 @@ int main() {
         eye[2] = camZ;
         lookAt(eye, target, up, view);
 
-        glUseProgram(shaderProgram);
-        glUniformMatrix4fv(locView, 1, GL_FALSE, view);
-        glUniformMatrix4fv(locProj, 1, GL_FALSE, projection);
-        glUniform3f(locLight, 1.0f, 1.0f, 2.0f);
-        glUniform3f(locViewPos, eye[0], eye[1], eye[2]);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture);
-
         for (const auto& mesh : meshes) {
+            glUseProgram(mesh.shaderProgram);
+            GLint locWorld = glGetUniformLocation(mesh.shaderProgram, "WorldMatrix");
+            GLint locView = glGetUniformLocation(mesh.shaderProgram, "ViewMatrix");
+            GLint locProj = glGetUniformLocation(mesh.shaderProgram, "ProjectionMatrix");
+            GLint locLight = glGetUniformLocation(mesh.shaderProgram, "lightPos");
+            GLint locViewPos = glGetUniformLocation(mesh.shaderProgram, "viewPos");
+            glUniformMatrix4fv(locView, 1, GL_FALSE, view);
+            glUniformMatrix4fv(locProj, 1, GL_FALSE, projection);
+            glUniform3f(locLight, 1.0f, 1.0f, 2.0f);
+            glUniform3f(locViewPos, eye[0], eye[1], eye[2]);
             glUniformMatrix4fv(locWorld, 1, GL_FALSE, mesh.WorldMatrix);
+
+            if (mesh.shaderProgram == lambertProgram || mesh.shaderProgram == phongProgram) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, texture);
+                glUniform1i(glGetUniformLocation(mesh.shaderProgram, "texture1"), 0);
+            } else if (mesh.shaderProgram == colorProgram) {
+                glUniform3f(glGetUniformLocation(mesh.shaderProgram, "objectColor"), 0.0f, 0.0f, 1.0f);
+            }
+
             glBindVertexArray(mesh.VAO);
             glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
         }
@@ -463,14 +520,15 @@ int main() {
         glfwPollEvents();
     }
 
-    // Nettoyage
     for (auto& mesh : meshes) {
         glDeleteVertexArrays(1, &mesh.VAO);
         glDeleteBuffers(1, &mesh.VBO);
         glDeleteBuffers(1, &mesh.EBO);
     }
     glDeleteTextures(1, &texture);
-    glDeleteProgram(shaderProgram);
+    glDeleteProgram(lambertProgram);
+    glDeleteProgram(phongProgram);
+    glDeleteProgram(colorProgram);
     glfwDestroyWindow(window);
     glfwTerminate();
 
