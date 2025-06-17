@@ -1,3 +1,5 @@
+mtllib cylinder.mtl
+usemtl CylinderMaterial
 # Cylindre simple avec bases octogonales
 # Sommets pour la base inférieure (z = -0.5)
 v 0.5 0.0 -0.5

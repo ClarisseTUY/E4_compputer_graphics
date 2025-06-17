@@ -1,3 +1,5 @@
+mtllib pyramid.mtl
+usemtl PyramidMaterial
 v -0.5 -0.5 0.5
 v 0.5 -0.5 0.5
 v 0.5 -0.5 -0.5

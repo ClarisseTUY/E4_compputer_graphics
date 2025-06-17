@@ -1,0 +1,5 @@
+newmtl CubeMaterial
+Ka 0.1 0.1 0.3    # Ambiant : bleu sombre
+Kd 0.0 0.0 1.0    # Diffuse : bleu vif
+Ks 0.5 0.5 0.5    # Spéculaire : gris
+Ns 32.0           # Shininess (utilisé dans le shader Phong)

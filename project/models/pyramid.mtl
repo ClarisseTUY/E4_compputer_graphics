@@ -1,0 +1,5 @@
+newmtl PyramidMaterial
+Ka 0.1 0.2 0.1    # Ambiant : vert sombre
+Kd 0.0 1.0 0.0    # Diffuse : vert vif
+Ks 0.5 0.5 0.5    # Spéculaire : gris
+Ns 32.0

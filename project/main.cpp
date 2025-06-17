@@ -180,17 +180,17 @@ in vec2 TexCoord;
 
 out vec4 FragColor;
 
-uniform sampler2D texture1;
 uniform vec3 lightPos;
 uniform vec3 viewPos;
+uniform vec3 Ka;
+uniform vec3 Kd;
 
 const float gamma = 2.2;
 
 void main() {
-    vec3 texColor = texture(texture1, TexCoord).rgb;
-    vec3 color = pow(texColor, vec3(gamma));
+    vec3 color = Kd;
 
-    vec3 ambient = 0.1 * color;
+    vec3 ambient = Ka * color;
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
@@ -211,18 +211,19 @@ in vec2 TexCoord;
 
 out vec4 FragColor;
 
-uniform sampler2D texture1;
 uniform vec3 lightPos;
 uniform vec3 viewPos;
+uniform vec3 Ka;
+uniform vec3 Kd;
+uniform vec3 Ks;
+uniform float Ns;
 
 const float gamma = 2.2;
-const float shininess = 32.0;
 
 void main() {
-    vec3 texColor = texture(texture1, TexCoord).rgb;
-    vec3 color = pow(texColor, vec3(gamma));
+    vec3 color = Kd;
 
-    vec3 ambient = 0.1 * color;
+    vec3 ambient = Ka * color;
 
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
@@ -231,8 +232,8 @@ void main() {
 
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
-    vec3 specular = 0.5 * spec * vec3(1.0);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), Ns);
+    vec3 specular = Ks * spec;
 
     vec3 result = ambient + diffuse + specular;
     result = pow(result, vec3(1.0/gamma));
@@ -251,15 +252,15 @@ out vec4 FragColor;
 
 uniform vec3 lightPos;
 uniform vec3 viewPos;
-uniform vec3 objectColor;
+uniform vec3 Ka;
+uniform vec3 Kd;
 
 const float gamma = 2.2;
 
 void main() {
-    vec3 color = objectColor;
+    vec3 color = Kd;
 
-    vec3 ambient = 0.1 * color;
-
+    vec3 ambient = Ka * color;
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
@@ -309,11 +310,15 @@ GLuint createProgram(const char* vertSrc, const char* fragSrc) {
 
 // Structure pour stocker les données du mesh
 struct Mesh {
-    std::vector<float> vertices; // Format : [x,y,z, nx,ny,nz, u,v, ...]
+    std::vector<float> vertices;
     std::vector<GLuint> indices;
     GLuint VAO, VBO, EBO;
     float WorldMatrix[16];
-    GLuint shaderProgram; // Shader spécifique à cet objet
+    GLuint shaderProgram;
+    float Ka[3];
+    float Kd[3];
+    float Ks[3];
+    float Ns;
 };
 
 // Fonction pour charger un OBJ avec TinyOBJLoader
@@ -323,7 +328,8 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
     std::vector<tinyobj::material_t> materials;
     std::string warn, err;
 
-    bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.c_str(), nullptr, true);
+    std::string base_dir = path.substr(0, path.find_last_of("/\\"));
+    bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.c_str(), base_dir.c_str(), true);
 
     if (!warn.empty()) std::cerr << "Warning: " << warn << std::endl;
     if (!err.empty()) std::cerr << "Error: " << err << std::endl;
@@ -333,7 +339,8 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
     std::vector<GLuint> indexData;
 
     for (const auto& shape : shapes) {
-        for (const auto& index : shape.mesh.indices) {
+        for (size_t i = 0; i < shape.mesh.indices.size(); ++i) {
+            const auto& index = shape.mesh.indices[i];
             vertexData.push_back(attrib.vertices[3 * index.vertex_index + 0]);
             vertexData.push_back(attrib.vertices[3 * index.vertex_index + 1]);
             vertexData.push_back(attrib.vertices[3 * index.vertex_index + 2]);
@@ -357,6 +364,19 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
             }
 
             indexData.push_back(static_cast<GLuint>(indexData.size()));
+        }
+
+        if (!shape.mesh.material_ids.empty() && shape.mesh.material_ids[0] >= 0) {
+            const auto& mat = materials[shape.mesh.material_ids[0]];
+            mesh.Ka[0] = mat.ambient[0];  mesh.Ka[1] = mat.ambient[1];  mesh.Ka[2] = mat.ambient[2];
+            mesh.Kd[0] = mat.diffuse[0];  mesh.Kd[1] = mat.diffuse[1];  mesh.Kd[2] = mat.diffuse[2];
+            mesh.Ks[0] = mat.specular[0]; mesh.Ks[1] = mat.specular[1]; mesh.Ks[2] = mat.specular[2];
+            mesh.Ns = mat.shininess;
+        } else {
+            mesh.Ka[0] = 0.1f; mesh.Ka[1] = 0.1f; mesh.Ka[2] = 0.1f;
+            mesh.Kd[0] = 0.8f; mesh.Kd[1] = 0.8f; mesh.Kd[2] = 0.8f;
+            mesh.Ks[0] = 0.5f; mesh.Ks[1] = 0.5f; mesh.Ks[2] = 0.5f;
+            mesh.Ns = 32.0f;
         }
     }
 
@@ -461,14 +481,6 @@ int main() {
     for (int i = 0; i < 16; ++i) meshes[2].WorldMatrix[i] = worldPyramid[i];
     meshes[2].shaderProgram = lambertProgram;
 
-    GLuint texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    unsigned char texData[3] = {255, 128, 0};
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1,1,0, GL_RGB, GL_UNSIGNED_BYTE, texData);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
     float projection[16];
     perspective(45.0f, 800.0f/600.0f, 0.1f, 100.0f, projection);
 
@@ -498,18 +510,21 @@ int main() {
             GLint locProj = glGetUniformLocation(mesh.shaderProgram, "ProjectionMatrix");
             GLint locLight = glGetUniformLocation(mesh.shaderProgram, "lightPos");
             GLint locViewPos = glGetUniformLocation(mesh.shaderProgram, "viewPos");
+            GLint locKa = glGetUniformLocation(mesh.shaderProgram, "Ka");
+            GLint locKd = glGetUniformLocation(mesh.shaderProgram, "Kd");
+            GLint locKs = glGetUniformLocation(mesh.shaderProgram, "Ks");
+            GLint locNs = glGetUniformLocation(mesh.shaderProgram, "Ns");
+
             glUniformMatrix4fv(locView, 1, GL_FALSE, view);
             glUniformMatrix4fv(locProj, 1, GL_FALSE, projection);
             glUniform3f(locLight, 1.0f, 1.0f, 2.0f);
             glUniform3f(locViewPos, eye[0], eye[1], eye[2]);
             glUniformMatrix4fv(locWorld, 1, GL_FALSE, mesh.WorldMatrix);
-
-            if (mesh.shaderProgram == lambertProgram || mesh.shaderProgram == phongProgram) {
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, texture);
-                glUniform1i(glGetUniformLocation(mesh.shaderProgram, "texture1"), 0);
-            } else if (mesh.shaderProgram == colorProgram) {
-                glUniform3f(glGetUniformLocation(mesh.shaderProgram, "objectColor"), 0.0f, 0.0f, 1.0f);
+            glUniform3fv(locKa, 1, mesh.Ka);
+            glUniform3fv(locKd, 1, mesh.Kd);
+            if (mesh.shaderProgram == phongProgram) {
+                glUniform3fv(locKs, 1, mesh.Ks);
+                glUniform1f(locNs, mesh.Ns);
             }
 
             glBindVertexArray(mesh.VAO);
@@ -525,7 +540,6 @@ int main() {
         glDeleteBuffers(1, &mesh.VBO);
         glDeleteBuffers(1, &mesh.EBO);
     }
-    glDeleteTextures(1, &texture);
     glDeleteProgram(lambertProgram);
     glDeleteProgram(phongProgram);
     glDeleteProgram(colorProgram);
