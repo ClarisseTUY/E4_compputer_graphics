@@ -104,11 +104,18 @@ void perspective(float fov, float ratio, float near, float far, float* proj) {
     proj[15] = 0.0f;
 }
 
-// ========== GESTION SOURIS ==========
-float rotX = 0.0f, rotY = 0.0f;
-double lastX = 0.0, lastY = 0.0;
+// ========== CAMERA VARIABLES ==========
+bool fpsMode = false; // Orbite par défaut
+float eye[3] = {0.0f, 0.0f, 5.0f}; // Position initiale
+float yaw = -90.0f; // Rotation Y (horizontal)
+float pitch = 0.0f; // Rotation X (vertical)
+float fov = 45.0f; // Champ de vision
+float rotX = 0.0f, rotY = 0.0f; // Pour mode orbite
+float radius = 5.0f; // Rayon orbite
+double lastX = 400.0, lastY = 300.0; // Centre de la fenêtre
 bool firstMouse = true;
 
+// ========== GESTION SOURIS ==========
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if (firstMouse) {
         lastX = xpos;
@@ -116,36 +123,131 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
         firstMouse = false;
     }
     double xoffset = xpos - lastX;
-    double yoffset = ypos - lastY;
+    double yoffset = lastY - ypos; // Inversé pour mouvement naturel
     lastX = xpos;
     lastY = ypos;
 
-    float sensitivity = 0.3f;
-    rotX += (float)yoffset * sensitivity;
-    rotY += (float)xoffset * sensitivity;
+    float sensitivity = 0.1f;
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
 
-    if(rotX > 90.0f) rotX = 90.0f;
-    if(rotX < -90.0f) rotX = -90.0f;
+    if (fpsMode) {
+        yaw += (float)xoffset;
+        pitch += (float)yoffset;
+        if (pitch > 89.0f) pitch = 89.0f;
+        if (pitch < -89.0f) pitch = -89.0f;
+    } else {
+        rotY += (float)xoffset;
+        rotX += (float)yoffset;
+        if (rotX > 90.0f) rotX = 90.0f;
+        if (rotX < -90.0f) rotX = -90.0f;
+        if (rotY > 180.0f) rotY -= 360.0f;
+        if (rotY < -180.0f) rotY += 360.0f;
+    }
+}
+
+// ========== GESTION MOLETTE ==========
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    if (fpsMode) {
+        fov -= (float)yoffset;
+        if (fov < 10.0f) fov = 10.0f;
+        if (fov > 90.0f) fov = 90.0f;
+    } else {
+        radius -= (float)yoffset * 0.5f;
+        if (radius < 1.0f) radius = 1.0f;
+        if (radius > 10.0f) radius = 10.0f;
+    }
 }
 
 // ========== GESTION CLAVIER ==========
 void processInput(GLFWwindow* window) {
-    float sensitivity = 0.05f;
+    static double lastToggleTime = 0.0;
+    double currentTime = glfwGetTime();
+    float deltaTime = 0.016f; // ~60 FPS
 
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        rotX -= sensitivity;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        rotX += sensitivity;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        rotY -= sensitivity;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        rotY += sensitivity;
+    // Bascule FPS/Orbite avec touche 'C'
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && currentTime - lastToggleTime > 0.2) {
+        fpsMode = !fpsMode;
+        firstMouse = true; // Réinitialiser la souris
+        lastToggleTime = currentTime;
+    }
 
-    if(rotX > 90.0f) rotX = 90.0f;
-    if(rotX < -90.0f) rotX = -90.0f;
+    if (fpsMode) {
+        float speed = 5.0f * deltaTime;
+        float front[3], right[3], up[3] = {0.0f, 1.0f, 0.0f};
+        float radYaw = yaw * (3.14159265f/180.0f);
+        float radPitch = pitch * (3.14159265f/180.0f);
+        front[0] = cos(radYaw) * cos(radPitch);
+        front[1] = sin(radPitch);
+        front[2] = sin(radYaw) * cos(radPitch);
+        normalize(front);
+        cross(front, up, right);
+        normalize(right);
+
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+            eye[0] += speed * front[0];
+            eye[1] += speed * front[1];
+            eye[2] += speed * front[2];
+        }
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+            eye[0] -= speed * front[0];
+            eye[1] -= speed * front[1];
+            eye[2] -= speed * front[2];
+        }
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+            eye[0] += speed * right[0];
+            eye[1] += speed * right[1];
+            eye[2] += speed * right[2];
+        }
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+            eye[0] -= speed * right[0];
+            eye[1] -= speed * right[1];
+            eye[2] -= speed * right[2];
+        }
+        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+            eye[1] += speed;
+        }
+        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+            eye[1] -= speed;
+        }
+    } else {
+        float sensitivity = 0.05f;
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+            rotX -= sensitivity;
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+            rotX += sensitivity;
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+            rotY -= sensitivity;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+            rotY += sensitivity;
+        if (rotX > 90.0f) rotX = 90.0f;
+        if (rotX < -90.0f) rotX = -90.0f;
+        if (rotY > 180.0f) rotY -= 360.0f;
+        if (rotY < -180.0f) rotY += 360.0f;
+    }
+
+    // Zoom avec +/- (optionnel)
+    if (glfwGetKey(window, GLFW_KEY_KP_ADD) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS) {
+        if (fpsMode) {
+            fov -= 1.0f;
+            if (fov < 10.0f) fov = 10.0f;
+        } else {
+            radius -= 0.5f;
+            if (radius < 1.0f) radius = 1.0f;
+        }
+    }
+    if (glfwGetKey(window, GLFW_KEY_KP_SUBTRACT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS) {
+        if (fpsMode) {
+            fov += 1.0f;
+            if (fov > 90.0f) fov = 90.0f;
+        } else {
+            radius += 0.5f;
+            if (radius > 10.0f) radius = 10.0f;
+        }
+    }
 }
 
 // ========== SHADERS ==========
@@ -185,20 +287,18 @@ uniform vec3 viewPos;
 uniform vec3 Ka;
 uniform vec3 Kd;
 
-const float gamma = 2.2;
-
 void main() {
-    vec3 color = Kd;
+    vec3 ka = pow(Ka, vec3(2.2));
+    vec3 kd = pow(Kd, vec3(2.2));
+    vec3 color = kd;
 
-    vec3 ambient = Ka * color;
+    vec3 ambient = ka * color;
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * color;
 
     vec3 result = ambient + diffuse;
-    result = pow(result, vec3(1.0/gamma));
-
     FragColor = vec4(result, 1.0);
 }
 )glsl";
@@ -218,12 +318,13 @@ uniform vec3 Kd;
 uniform vec3 Ks;
 uniform float Ns;
 
-const float gamma = 2.2;
-
 void main() {
-    vec3 color = Kd;
+    vec3 ka = pow(Ka, vec3(2.2));
+    vec3 kd = pow(Kd, vec3(2.2));
+    vec3 ks = pow(Ks, vec3(2.2));
+    vec3 color = kd;
 
-    vec3 ambient = Ka * color;
+    vec3 ambient = ka * color;
 
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
@@ -233,11 +334,9 @@ void main() {
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), Ns);
-    vec3 specular = Ks * spec;
+    vec3 specular = ks * spec;
 
     vec3 result = ambient + diffuse + specular;
-    result = pow(result, vec3(1.0/gamma));
-
     FragColor = vec4(result, 1.0);
 }
 )glsl";
@@ -255,20 +354,18 @@ uniform vec3 viewPos;
 uniform vec3 Ka;
 uniform vec3 Kd;
 
-const float gamma = 2.2;
-
 void main() {
-    vec3 color = Kd;
+    vec3 ka = pow(Ka, vec3(2.2));
+    vec3 kd = pow(Kd, vec3(2.2));
+    vec3 color = kd;
 
-    vec3 ambient = Ka * color;
+    vec3 ambient = ka * color;
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * color;
 
     vec3 result = ambient + diffuse;
-    result = pow(result, vec3(1.0/gamma));
-
     FragColor = vec4(result, 1.0);
 }
 )glsl";
@@ -350,9 +447,32 @@ bool loadOBJ(const std::string& path, Mesh& mesh) {
                 vertexData.push_back(attrib.normals[3 * index.normal_index + 1]);
                 vertexData.push_back(attrib.normals[3 * index.normal_index + 2]);
             } else {
-                vertexData.push_back(0.0f);
-                vertexData.push_back(0.0f);
-                vertexData.push_back(1.0f);
+                float normal[3] = {0.0f, 0.0f, 0.0f};
+                if (i >= 2 && i % 3 == 2) {
+                    size_t idx0 = shape.mesh.indices[i - 2].vertex_index;
+                    size_t idx1 = shape.mesh.indices[i - 1].vertex_index;
+                    size_t idx2 = shape.mesh.indices[i].vertex_index;
+                    float v0[3] = {attrib.vertices[3 * idx0], attrib.vertices[3 * idx0 + 1], attrib.vertices[3 * idx0 + 2]};
+                    float v1[3] = {attrib.vertices[3 * idx1], attrib.vertices[3 * idx1 + 1], attrib.vertices[3 * idx1 + 2]};
+                    float v2[3] = {attrib.vertices[3 * idx2], attrib.vertices[3 * idx2 + 1], attrib.vertices[3 * idx2 + 2]};
+                    float e1[3] = {v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]};
+                    float e2[3] = {v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]};
+                    cross(e1, e2, normal);
+                    normalize(normal);
+                    vertexData[vertexData.size() - 9 + 3] = normal[0];
+                    vertexData[vertexData.size() - 9 + 4] = normal[1];
+                    vertexData[vertexData.size() - 9 + 5] = normal[2];
+                    vertexData[vertexData.size() - 6 + 3] = normal[0];
+                    vertexData[vertexData.size() - 6 + 4] = normal[1];
+                    vertexData[vertexData.size() - 6 + 5] = normal[2];
+                    vertexData[vertexData.size() - 3 + 3] = normal[0];
+                    vertexData[vertexData.size() - 3 + 4] = normal[1];
+                    vertexData[vertexData.size() - 3 + 5] = normal[2];
+                } else {
+                    vertexData.push_back(0.0f);
+                    vertexData.push_back(0.0f);
+                    vertexData.push_back(1.0f);
+                }
             }
 
             if (index.texcoord_index >= 0) {
@@ -432,6 +552,7 @@ int main() {
     glEnable(GL_FRAMEBUFFER_SRGB);
 
     glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetScrollCallback(window, scroll_callback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     GLuint lambertProgram = createProgram(vertexShaderSource, fragmentShaderLambertSource);
@@ -482,10 +603,9 @@ int main() {
     meshes[2].shaderProgram = lambertProgram;
 
     float projection[16];
-    perspective(45.0f, 800.0f/600.0f, 0.1f, 100.0f, projection);
+    perspective(fov, 800.0f / 600.0f, 0.1f, 100.0f, projection);
 
     float view[16];
-    float eye[3] = {0.0f, 0.0f, 3.0f};
     float target[3] = {0.0f, 0.0f, 0.0f};
     float up[3] = {0.0f, 1.0f, 0.0f};
 
@@ -494,14 +614,30 @@ int main() {
 
         processInput(window);
 
-        float radius = 5.0f;
-        float camX = radius * cos(rotX * 3.14159265f / 180.0f) * sin(rotY * 3.14159265f / 180.0f);
-        float camY = radius * sin(rotX * 3.14159265f / 180.0f);
-        float camZ = radius * cos(rotX * 3.14159265f / 180.0f) * cos(rotY * 3.14159265f / 180.0f);
-        eye[0] = camX;
-        eye[1] = camY;
-        eye[2] = camZ;
-        lookAt(eye, target, up, view);
+        // Calculer la view matrix
+        if (fpsMode) {
+            float front[3];
+            float radYaw = yaw * (3.14159265f/180.0f);
+            float radPitch = pitch * (3.14159265f/180.0f);
+            front[0] = cos(radYaw) * cos(radPitch);
+            front[1] = sin(radPitch);
+            front[2] = sin(radYaw) * cos(radPitch);
+            target[0] = eye[0] + front[0];
+            target[1] = eye[1] + front[1];
+            target[2] = eye[2] + front[2];
+            lookAt(eye, target, up, view);
+        } else {
+            float camX = radius * cos(rotX * 3.14159265f / 180.0f) * sin(rotY * 3.14159265f / 180.0f);
+            float camY = radius * sin(rotX * 3.14159265f / 180.0f);
+            float camZ = radius * cos(rotX * 3.14159265f / 180.0f) * cos(rotY * 3.14159265f / 180.0f);
+            eye[0] = camX;
+            eye[1] = camY;
+            eye[2] = camZ;
+            lookAt(eye, target, up, view);
+        }
+
+        // Mettre à jour la projection si FOV change
+        perspective(fov, 800.0f / 600.0f, 0.1f, 100.0f, projection);
 
         for (const auto& mesh : meshes) {
             glUseProgram(mesh.shaderProgram);
