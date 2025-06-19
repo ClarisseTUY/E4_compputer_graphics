@@ -257,9 +257,12 @@ layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
 layout(location=2) in vec2 aTexCoord;
 
+layout(std140) uniform Matrices {
+    mat4 ViewMatrix;
+    mat4 ProjectionMatrix;
+};
+
 uniform mat4 WorldMatrix;
-uniform mat4 ViewMatrix;
-uniform mat4 ProjectionMatrix;
 
 out vec3 FragPos;
 out vec3 Normal;
@@ -286,13 +289,19 @@ uniform vec3 lightPos;
 uniform vec3 viewPos;
 uniform vec3 Ka;
 uniform vec3 Kd;
+uniform vec3 SkyColor;
+uniform vec3 GroundColor;
+uniform vec3 SkyDirection;
+uniform float Ia;
 
 void main() {
     vec3 ka = pow(Ka, vec3(2.2));
     vec3 kd = pow(Kd, vec3(2.2));
     vec3 color = kd;
 
-    vec3 ambient = ka * color;
+    float HemisphereFactor = dot(normalize(Normal), SkyDirection) * 0.5 + 0.5;
+    vec3 AmbientColor = Ia * mix(GroundColor, SkyColor, HemisphereFactor);
+    vec3 ambient = ka * AmbientColor;
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
@@ -317,6 +326,10 @@ uniform vec3 Ka;
 uniform vec3 Kd;
 uniform vec3 Ks;
 uniform float Ns;
+uniform vec3 SkyColor;
+uniform vec3 GroundColor;
+uniform vec3 SkyDirection;
+uniform float Ia;
 
 void main() {
     vec3 ka = pow(Ka, vec3(2.2));
@@ -324,7 +337,9 @@ void main() {
     vec3 ks = pow(Ks, vec3(2.2));
     vec3 color = kd;
 
-    vec3 ambient = ka * color;
+    float HemisphereFactor = dot(normalize(Normal), SkyDirection) * 0.5 + 0.5;
+    vec3 AmbientColor = Ia * mix(GroundColor, SkyColor, HemisphereFactor);
+    vec3 ambient = ka * AmbientColor;
 
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
@@ -353,13 +368,19 @@ uniform vec3 lightPos;
 uniform vec3 viewPos;
 uniform vec3 Ka;
 uniform vec3 Kd;
+uniform vec3 SkyColor;
+uniform vec3 GroundColor;
+uniform vec3 SkyDirection;
+uniform float Ia;
 
 void main() {
     vec3 ka = pow(Ka, vec3(2.2));
     vec3 kd = pow(Kd, vec3(2.2));
     vec3 color = kd;
 
-    vec3 ambient = ka * color;
+    float HemisphereFactor = dot(normalize(Normal), SkyDirection) * 0.5 + 0.5;
+    vec3 AmbientColor = Ia * mix(GroundColor, SkyColor, HemisphereFactor);
+    vec3 ambient = ka * AmbientColor;
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
@@ -559,6 +580,22 @@ int main() {
     GLuint phongProgram = createProgram(vertexShaderSource, fragmentShaderPhongSource);
     GLuint colorProgram = createProgram(vertexShaderSource, fragmentShaderColorSource);
 
+    // Configurer UBO pour ViewMatrix et ProjectionMatrix
+    GLuint uboMatrices;
+    glGenBuffers(1, &uboMatrices);
+    glBindBuffer(GL_UNIFORM_BUFFER, uboMatrices);
+    glBufferData(GL_UNIFORM_BUFFER, 2 * 16 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    // Lier UBO au point de liaison 0
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, uboMatrices);
+    GLuint uboIndex = glGetUniformBlockIndex(lambertProgram, "Matrices");
+    glUniformBlockBinding(lambertProgram, uboIndex, 0);
+    uboIndex = glGetUniformBlockIndex(phongProgram, "Matrices");
+    glUniformBlockBinding(phongProgram, uboIndex, 0);
+    uboIndex = glGetUniformBlockIndex(colorProgram, "Matrices");
+    glUniformBlockBinding(colorProgram, uboIndex, 0);
+
     std::vector<Mesh> meshes(3);
 
     // Cube
@@ -636,28 +673,38 @@ int main() {
             lookAt(eye, target, up, view);
         }
 
-        // Mettre à jour la projection si FOV change
+        // Projection FOV
         perspective(fov, 800.0f / 600.0f, 0.1f, 100.0f, projection);
+
+        // UBO
+        glBindBuffer(GL_UNIFORM_BUFFER, uboMatrices);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, 16 * sizeof(float), view);
+        glBufferSubData(GL_UNIFORM_BUFFER, 16 * sizeof(float), 16 * sizeof(float), projection);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
         for (const auto& mesh : meshes) {
             glUseProgram(mesh.shaderProgram);
             GLint locWorld = glGetUniformLocation(mesh.shaderProgram, "WorldMatrix");
-            GLint locView = glGetUniformLocation(mesh.shaderProgram, "ViewMatrix");
-            GLint locProj = glGetUniformLocation(mesh.shaderProgram, "ProjectionMatrix");
             GLint locLight = glGetUniformLocation(mesh.shaderProgram, "lightPos");
             GLint locViewPos = glGetUniformLocation(mesh.shaderProgram, "viewPos");
             GLint locKa = glGetUniformLocation(mesh.shaderProgram, "Ka");
             GLint locKd = glGetUniformLocation(mesh.shaderProgram, "Kd");
             GLint locKs = glGetUniformLocation(mesh.shaderProgram, "Ks");
             GLint locNs = glGetUniformLocation(mesh.shaderProgram, "Ns");
+            GLint locSkyColor = glGetUniformLocation(mesh.shaderProgram, "SkyColor");
+            GLint locGroundColor = glGetUniformLocation(mesh.shaderProgram, "GroundColor");
+            GLint locSkyDirection = glGetUniformLocation(mesh.shaderProgram, "SkyDirection");
+            GLint locIa = glGetUniformLocation(mesh.shaderProgram, "Ia");
 
-            glUniformMatrix4fv(locView, 1, GL_FALSE, view);
-            glUniformMatrix4fv(locProj, 1, GL_FALSE, projection);
+            glUniformMatrix4fv(locWorld, 1, GL_FALSE, mesh.WorldMatrix);
             glUniform3f(locLight, 1.0f, 1.0f, 2.0f);
             glUniform3f(locViewPos, eye[0], eye[1], eye[2]);
-            glUniformMatrix4fv(locWorld, 1, GL_FALSE, mesh.WorldMatrix);
             glUniform3fv(locKa, 1, mesh.Ka);
             glUniform3fv(locKd, 1, mesh.Kd);
+            glUniform3f(locSkyColor, 0.5f, 0.7f, 1.0f); // Bleu ciel
+            glUniform3f(locGroundColor, 0.3f, 0.5f, 0.2f); // Vert sol
+            glUniform3f(locSkyDirection, 0.0f, 1.0f, 0.0f); // Vers le haut
+            glUniform1f(locIa, 0.2f); // Intensité ambiante
             if (mesh.shaderProgram == phongProgram) {
                 glUniform3fv(locKs, 1, mesh.Ks);
                 glUniform1f(locNs, mesh.Ns);
@@ -676,6 +723,7 @@ int main() {
         glDeleteBuffers(1, &mesh.VBO);
         glDeleteBuffers(1, &mesh.EBO);
     }
+    glDeleteBuffers(1, &uboMatrices);
     glDeleteProgram(lambertProgram);
     glDeleteProgram(phongProgram);
     glDeleteProgram(colorProgram);
